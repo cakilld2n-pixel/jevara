@@ -15,6 +15,11 @@ import { AuthDialog } from "@/components/auth/AuthDialog";
 import { OnboardingWizard } from "@/components/auth/OnboardingWizard";
 import { getUser, signOut, type AuthUser } from "@/lib/auth";
 import { getProfile } from "@/lib/profile";
+import { getStorage } from "@/lib/storage/db";
+import { startSession, completeSet, finishSession } from "@/lib/session/lifecycle";
+import { SessionBar } from "@/components/workout/SessionBar";
+import { SetRow } from "@/components/workout/SetRow";
+import type { CanonicalSession, PremiumEvent } from "@/lib/storage/port";
 import type { Program } from "@/data/types";
 
 const LANG_KEY = "jevara_language_v1";
@@ -34,6 +39,11 @@ export default function Home() {
   const [showAuth, setShowAuth] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [profileOnboarded, setProfileOnboarded] = useState<boolean | null>(null);
+  const [activeSession, setActiveSession] = useState<CanonicalSession | null>(null);
+  const [log, setLog] = useState<Record<string, unknown>>({});
+  const [events, setEvents] = useState<PremiumEvent[]>([]);
+  const [sessions, setSessions] = useState<CanonicalSession[]>([]);
+  const [showFinishConfirm, setShowFinishConfirm] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem(LANG_KEY) as "id" | "en" | null;
@@ -48,6 +58,13 @@ export default function Home() {
 
   useEffect(() => {
     getUser().then(setUser).catch(() => setUser(null));
+    // load storage for 04
+    const s = getStorage();
+    setLog(s.loadLog());
+    const p = s.loadPremium();
+    setEvents(p.events || []);
+    setSessions(p.sessions || []);
+    setActiveSession(s.loadActiveSession());
   }, []);
 
   useEffect(() => {
@@ -77,6 +94,97 @@ export default function Home() {
 
   const ctx = getSessionContext({ curPh, curWk, curDay, activeCP, cpWk, cpDay });
   const phase = FOUNDATION[curPh];
+
+  // 04 — Session lifecycle helpers
+  const expected = ctx?.expectedSets ?? 0;
+  const done = ctx
+    ? ctx.exs.reduce(
+        (acc, _, i) =>
+          acc +
+          Array.from({ length: ctx.exs[i].s }, (_, s) => (log[ctx.key(i, s) + "_ok"] ? 1 : 0) as number).reduce(
+            (a: number, b: number) => a + b,
+            0 as number
+          ),
+        0 as number
+      )
+    : 0;
+  const volume = events.filter((e) => activeSession && String(e.sessionId) === String(activeSession.id) && e.type !== "W").reduce((a, e) => a + (Number(e.volume) || 0), 0);
+
+  const handleStart = () => {
+    if (!ctx) return;
+    const week = activeCP ? cpWk : curWk;
+    const { session, error } = startSession(ctx, week, activeSession);
+    if (error) {
+      toast(error);
+      return;
+    }
+    if (session) {
+      setActiveSession(session);
+      getStorage().saveActiveSession(session);
+      toast("Workout dimulai");
+    }
+  };
+
+  const handleSetDone = (exIndex: number, setIndex: number, exName: string, exId: string, kg: string, reps: string, rir: string, type: string) => {
+    if (!ctx) return { ok: false, error: "No context" };
+    const key = ctx.key(exIndex, setIndex);
+    const res = completeSet({ name: exName, exerciseId: exId, key, kg, reps, rir, type, session: activeSession, log: log as Record<string, string | number | boolean | undefined>, events });
+    if (!res.ok) {
+      toast(res.error || "Validasi gagal");
+      return res;
+    }
+    const newLog = res.newLog!;
+    const newEvents = res.newEvents!;
+    setLog(newLog as Record<string, unknown>);
+    setEvents(newEvents);
+    const s = getStorage();
+    s.saveLog(newLog as Record<string, string | number | boolean | undefined>);
+    const p = s.loadPremium();
+    p.events = newEvents;
+    // update active volume
+    if (activeSession) {
+      const vol = newEvents.filter((e) => String(e.sessionId) === String(activeSession.id) && e.type !== "W").reduce((a, e) => a + (Number(e.volume) || 0), 0);
+      const cnt = ctx.exs.reduce(
+        (acc, _, i) =>
+          acc +
+          Array.from({ length: ctx.exs[i].s }, (_, s) => (newLog[ctx.key(i, s) + "_ok"] ? 1 : 0) as number).reduce(
+            (a: number, b: number) => a + b,
+            0 as number
+          ),
+        0 as number
+      );
+      const updated: CanonicalSession = { ...activeSession, volume: vol, completedSets: cnt, sets: cnt };
+      setActiveSession(updated);
+      s.saveActiveSession(updated);
+    }
+    s.savePremium({ ...s.loadPremium(), events: newEvents });
+    return { ok: true };
+  };
+
+  const handleFinish = (forceEarly?: boolean) => {
+    if (!activeSession) return;
+    const res = finishSession({ active: activeSession, expected, done, events, sessions, forceEarly });
+    if (res.needsConfirm) {
+      setShowFinishConfirm(true);
+      return;
+    }
+    if (res.error) {
+      toast(res.error);
+      return;
+    }
+    if (res.session) {
+      const newSessions = [res.session, ...sessions].slice(0, 150);
+      setSessions(newSessions);
+      const s = getStorage();
+      const p = s.loadPremium();
+      p.sessions = newSessions;
+      s.savePremium(p);
+      setActiveSession(null);
+      s.saveActiveSession(null);
+      setShowFinishConfirm(false);
+      toast(res.session.state === "completed" ? "Latihan Selesai — Canonical tersimpan" : "Sesi diakhiri lebih awal");
+    }
+  };
 
   return (
     <main className="mx-auto max-w-[520px] px-3 pb-24 pt-4 md:max-w-[780px]">
@@ -290,6 +398,69 @@ export default function Home() {
                       W{w}
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+
+            <SessionBar active={activeSession} done={done} expected={expected} volume={volume} onStart={handleStart} onFinish={handleFinish} />
+
+            {ctx && (
+              <div className="space-y-3">
+                {ctx.exs.map((ex, exIdx) => {
+                  const exId = ex.id || `e${exIdx}`;
+                  return (
+                    <div key={`${exId}-${exIdx}`} className="rounded-2xl border border-jevara-bd bg-jevara-bg2 p-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div>
+                          <div className="text-sm font-bold">{ex.n}</div>
+                          <div className="text-xs text-jevara-mu">
+                            {ex.s} sets • {ex.r} reps {ex.nt ? `• ${ex.nt}` : ""} • {activeSession ? "Logging aktif" : "Read-only"}
+                          </div>
+                        </div>
+                        <span className="rounded-full bg-jevara-bg3 px-2 py-1 text-[10px] font-bold text-jevara-mu">
+                          {exId}
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {Array.from({ length: ex.s }, (_, sIdx) => {
+                          const key = ctx.key(exIdx, sIdx);
+                          const isDone = !!log[`${key}_ok`];
+                          return (
+                            <SetRow
+                              key={key}
+                              index={sIdx}
+                              name={ex.n}
+                              exerciseId={exId}
+                              setKey={key}
+                              defaultKg={String(log[`${key}_kg`] ?? "")}
+                              defaultReps={String(log[`${key}_rp`] ?? "")}
+                              defaultRir={String(log[`${key}_rir`] ?? "")}
+                              defaultType={String(log[`${key}_type`] ?? "N")}
+                              isDone={isDone}
+                              onDone={(kg, reps, rir, type) => handleSetDone(exIdx, sIdx, ex.n, exId, kg, reps, rir, type)}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {showFinishConfirm && (
+              <div className="rounded-2xl border border-jevara-bd bg-jevara-bg2 p-4">
+                <div className="text-sm font-bold">Sesi belum selesai</div>
+                <p className="mt-1 text-xs text-jevara-mu">
+                  {done}/{expected} sets valid. Sesi akan disimpan sebagai ended_early, bukan completed.
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button onClick={() => setShowFinishConfirm(false)} className="rounded-xl border border-jevara-bd bg-jevara-bg3 py-2.5 text-xs font-bold">
+                    Lanjutkan
+                  </button>
+                  <button onClick={() => handleFinish(true)} className="rounded-xl bg-jevara-blue py-2.5 text-xs font-black text-[#07111d]">
+                    Akhiri Awal
+                  </button>
                 </div>
               </div>
             )}
