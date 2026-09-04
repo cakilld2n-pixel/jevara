@@ -30,7 +30,7 @@ function useHomeIQ() {
 
 export function Home() {
   const s = useJevara();
-  const { lang, ctx, premium, jevara, account } = s;
+  const { lang, ctx, premium, jevara, account, hydrated } = s;
   const rd = (premium?.readiness || [])[0] || null;
   const rs = readinessScore(rd);
   const rda = readinessAction(rs);
@@ -65,7 +65,7 @@ export function Home() {
   return (
     <div id="t-dash">
       <div className="hero">
-        <h2>{greeting(lang, firstNameOf(account?.name))}.</h2>
+        <h2 suppressHydrationWarning>{hydrated ? `${greeting(lang, firstNameOf(account?.name))}.` : lang === "en" ? "Good afternoon." : "Selamat sore."}</h2>
         <p>
           {t(lang, "today")} • {desc}
         </p>

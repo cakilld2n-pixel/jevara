@@ -398,8 +398,8 @@ export function CommercialCard() {
       <button className="secondary" style={{ width: "100%", marginTop: 10 }} onClick={() => s.openOverlay("JEVARA Access", <LicenseBody />)}>
         Access &amp; Activation
       </button>
-      <button className="secondary" style={{ width: "100%", marginTop: 8 }} onClick={() => { s.track("founder_dashboard_viewed"); s.openOverlay("Founder • Beta Dashboard", <BetaDashboardBody />); }}>
-        Beta Dashboard{firstNameOf(s.account?.name) ? ` • ${firstNameOf(s.account?.name)}` : ""}
+      <button suppressHydrationWarning className="secondary" style={{ width: "100%", marginTop: 8 }} onClick={() => { s.track("founder_dashboard_viewed"); s.openOverlay("Founder • Beta Dashboard", <BetaDashboardBody />); }}>
+        Beta Dashboard{s.hydrated && firstNameOf(s.account?.name) ? ` • ${firstNameOf(s.account?.name)}` : ""}
       </button>
     </div>
   );
