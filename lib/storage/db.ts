@@ -1,4 +1,5 @@
 import type { StoragePort, Premium, Log, CanonicalSession } from "./port";
+import { enqueue } from "@/lib/sync/queue";
 
 const LOG_KEY = "jevara_log_v2";
 const PREMIUM_KEY = "jevara_premium_v2";
@@ -63,6 +64,9 @@ export function createStorage(): StoragePort {
     },
     saveLog(log: Log) {
       safeSet(LOG_KEY, JSON.stringify(log));
+      try {
+        enqueue("workout_logs", "log", log as Record<string, unknown>);
+      } catch {}
     },
     loadPremium(): Premium {
       const raw = safeGet(PREMIUM_KEY);
@@ -98,6 +102,9 @@ export function createStorage(): StoragePort {
         weights: (p.weights || []).slice(-180),
       };
       safeSet(PREMIUM_KEY, JSON.stringify(toSave));
+      try {
+        enqueue("premium_events", "premium", toSave as unknown as Record<string, unknown>);
+      } catch {}
     },
     loadActiveSession(): CanonicalSession | null {
       const raw = safeGet(ACTIVE_KEY);
@@ -109,8 +116,17 @@ export function createStorage(): StoragePort {
       }
     },
     saveActiveSession(s: CanonicalSession | null) {
-      if (!s) safeRemove(ACTIVE_KEY);
-      else safeSet(ACTIVE_KEY, JSON.stringify(s));
+      if (!s) {
+        safeRemove(ACTIVE_KEY);
+        try {
+          enqueue("sessions", "active_null", { active: null } as Record<string, unknown>);
+        } catch {}
+      } else {
+        safeSet(ACTIVE_KEY, JSON.stringify(s));
+        try {
+          enqueue("sessions", s.id, s as unknown as Record<string, unknown>);
+        } catch {}
+      }
     },
     clearAll() {
       safeRemove(LOG_KEY);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
@@ -19,6 +19,11 @@ import { getStorage } from "@/lib/storage/db";
 import { startSession, completeSet, finishSession } from "@/lib/session/lifecycle";
 import { SessionBar } from "@/components/workout/SessionBar";
 import { SetRow } from "@/components/workout/SetRow";
+import { ProgressView } from "@/components/progress/ProgressView";
+import { UpdateBanner } from "@/components/pwa/UpdateBanner";
+import { backupToJson, parseBackupJson } from "@/lib/backup";
+import { getLang as getI18nLang, setLang as setI18nLang } from "@/lib/i18n";
+import { useSync } from "@/hooks/useSync";
 import type { CanonicalSession, PremiumEvent } from "@/lib/storage/port";
 import type { Program } from "@/data/types";
 
@@ -44,6 +49,8 @@ export default function Home() {
   const [events, setEvents] = useState<PremiumEvent[]>([]);
   const [sessions, setSessions] = useState<CanonicalSession[]>([]);
   const [showFinishConfirm, setShowFinishConfirm] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const { pending, syncing } = useSync();
 
   useEffect(() => {
     const saved = localStorage.getItem(LANG_KEY) as "id" | "en" | null;
@@ -470,11 +477,7 @@ export default function Home() {
         </TabsContent>
 
         <TabsContent value="prog">
-          <Card>
-            <CardContent>
-              <p className="text-sm text-jevara-mu">Progress — akan membaca Canonical Record di 08 (finalized sessions).</p>
-            </CardContent>
-          </Card>
+          <ProgressView sessions={sessions} events={events} />
         </TabsContent>
 
         <TabsContent value="pgm">
@@ -559,6 +562,67 @@ export default function Home() {
 
           <Card>
             <CardHeader>
+              <CardTitle>Backup & Restore — 09</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => {
+                    const s = getStorage();
+                    const json = backupToJson(s.loadLog() as Record<string, unknown>, s.loadPremium());
+                    const blob = new Blob([json], { type: "application/json" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `jevara-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    toast("Backup dibuat");
+                  }}
+                  className="rounded-xl bg-jevara-blue py-2.5 text-xs font-black text-[#07111d]"
+                >
+                  Export JSON
+                </button>
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="rounded-xl border border-jevara-bd bg-jevara-bg3 py-2.5 text-xs font-bold"
+                >
+                  Import JSON
+                </button>
+              </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => {
+                    const res = parseBackupJson(String(reader.result || ""));
+                    if (!res.ok || !res.payload) {
+                      toast(res.error || "File tidak valid");
+                      return;
+                    }
+                    const s = getStorage();
+                    s.saveLog(res.payload.log as never);
+                    s.savePremium(res.payload.premium as never);
+                    setLog(res.payload.log as never);
+                    setEvents((res.payload.premium as { events: PremiumEvent[] }).events || []);
+                    setSessions((res.payload.premium as { sessions: CanonicalSession[] }).sessions || []);
+                    toast("Backup dipulihkan");
+                  };
+                  reader.readAsText(file);
+                  e.target.value = "";
+                }}
+              />
+              <p className="mt-2 text-[10px] text-jevara-mu">Backup mencakup log, events, sessions, readiness. Supabase sync tetap via SyncQueue.</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Tools — Scaffold</CardTitle>
             </CardHeader>
             <CardContent>
@@ -567,15 +631,27 @@ export default function Home() {
                 <Switch checked={true} onCheckedChange={() => toast("Switch OK")} />
               </div>
               <div className="mt-4 flex gap-2">
-                <button onClick={() => toggleLang("id")} className={`rounded-xl px-3 py-2 text-xs font-bold ${lang === "id" ? "bg-jevara-blue text-[#07111d]" : "bg-jevara-bg3 text-jevara-mu border border-jevara-bd"}`}>
+                <button
+                  onClick={() => {
+                    toggleLang("id");
+                    setI18nLang("id");
+                  }}
+                  className={`rounded-xl px-3 py-2 text-xs font-bold ${lang === "id" ? "bg-jevara-blue text-[#07111d]" : "bg-jevara-bg3 text-jevara-mu border border-jevara-bd"}`}
+                >
                   🇮🇩 Indonesia
                 </button>
-                <button onClick={() => toggleLang("en")} className={`rounded-xl px-3 py-2 text-xs font-bold ${lang === "en" ? "bg-jevara-blue text-[#07111d]" : "bg-jevara-bg3 text-jevara-mu border border-jevara-bd"}`}>
+                <button
+                  onClick={() => {
+                    toggleLang("en");
+                    setI18nLang("en");
+                  }}
+                  className={`rounded-xl px-3 py-2 text-xs font-bold ${lang === "en" ? "bg-jevara-blue text-[#07111d]" : "bg-jevara-bg3 text-jevara-mu border border-jevara-bd"}`}
+                >
                   🇬🇧 English
                 </button>
               </div>
               <div className="mt-3 text-xs text-jevara-mu">
-                {lang === "id" ? "Bahasa aktif: Indonesia" : "Active language: English"} • JE_LANG persisted
+                {lang === "id" ? "Bahasa aktif: Indonesia" : "Active language: English"} • JE_LANG + lib/i18n persisted
               </div>
             </CardContent>
           </Card>
@@ -583,8 +659,9 @@ export default function Home() {
       </Tabs>
 
       <p className="mt-6 text-center text-[10px] text-jevara-mu">
-        JEVARA 0.9.9 — PWA offline-first • Supabase replica • Vercel • Sesi Terencana {ctx?.expectedSets ?? 0} sets
+        JEVARA 0.9.9 — PWA offline-first • Supabase replica • Vercel • Sesi Terencana {ctx?.expectedSets ?? 0} sets • Sync {syncing ? "…" : pending ? `${pending} pending` : "✓"}
       </p>
+      <UpdateBanner />
     </main>
   );
 }

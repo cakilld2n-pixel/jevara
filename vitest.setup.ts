@@ -18,12 +18,24 @@ if (typeof window !== "undefined" && !window.matchMedia) {
     dispatchEvent: vi.fn(),
   }));
 }
-if (typeof navigator !== "undefined" && !("serviceWorker" in navigator)) {
+if (typeof navigator !== "undefined") {
   // @ts-ignore
-  Object.defineProperty(navigator, "serviceWorker", {
-    value: { register: vi.fn(async () => ({})), ready: Promise.resolve({}) },
-    writable: true,
-  });
+  if (!("serviceWorker" in navigator)) {
+    Object.defineProperty(navigator, "serviceWorker", {
+      value: {
+        register: vi.fn(async () => ({})),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        ready: Promise.resolve({ addEventListener: vi.fn(), installing: null } as unknown as ServiceWorkerRegistration),
+      },
+      writable: true,
+    });
+  } else {
+    // ensure addEventListener exists even if already present
+    const sw = (navigator as unknown as { serviceWorker: Record<string, unknown> }).serviceWorker as Record<string, unknown>;
+    if (typeof sw.addEventListener !== "function") sw.addEventListener = vi.fn() as unknown as typeof sw.addEventListener;
+    if (!sw.ready) sw.ready = Promise.resolve({ addEventListener: vi.fn(), installing: null } as unknown as ServiceWorkerRegistration);
+  }
 }
 
 // Load Supabase env for tests if not present (Next.js loads .env.local at runtime, Vitest needs stub)
