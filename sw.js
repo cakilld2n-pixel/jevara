@@ -2,7 +2,7 @@
 // Strategy: network-first for the app shell (index.html) so users always get
 // the latest logic/bugfixes instead of getting stuck on a stale cached build;
 // cache-first for static icons that rarely change.
-var CACHE = 'jevara-static-v1';
+var CACHE = 'jevara-static-v2';
 var STATIC_ASSETS = ['/icon-192.png', '/icon-512.png', '/manifest.webmanifest'];
 
 self.addEventListener('install', function (event) {
@@ -31,7 +31,10 @@ self.addEventListener('fetch', function (event) {
   try {
     url = new URL(req.url);
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
-    if (url.pathname.startsWith('/_next/webpack')) return;
+    // Never let the SW touch Next.js build assets: stale _next chunks from a
+    // previous Next version cause "__webpack_modules__[moduleId] is not a
+    // function" / "reading 'call'" runtime errors on localhost.
+    if (url.pathname.startsWith('/_next/')) return;
   } catch (e) { return; }
   var isAppShell = url.pathname === '/' || url.pathname.endsWith('/index.html');
 
