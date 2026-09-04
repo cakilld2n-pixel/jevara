@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ToastProvider } from "@/components/ui/toast";
+import { Agentation } from "agentation";
 
 export const metadata: Metadata = {
   title: "JEVARA — Train with Direction",
@@ -31,6 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="bg-jevara-bg text-jevara-tx">
         <ToastProvider>{children}</ToastProvider>
+        {process.env.NODE_ENV === "development" && <Agentation />}
       </body>
     </html>
   );
