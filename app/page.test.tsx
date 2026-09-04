@@ -1,8 +1,7 @@
 import * as React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import Home from "./page";
-import { ToastProvider } from "@/components/ui/toast";
+import Page from "./page";
 
 vi.mock("@/lib/supabase/client", () => ({
   isSupabaseConfigured: () => true,
@@ -35,40 +34,62 @@ vi.mock("@/lib/profile", () => ({
   completeOnboarding: async () => ({ recommended: "rc1" }),
 }));
 
-function renderHome() {
-  return render(
-    <ToastProvider>
-      <Home />
-    </ToastProvider>
-  );
+vi.mock("agentation", () => ({
+  Agentation: () => null,
+}));
+
+function renderPage() {
+  return render(<Page />);
 }
 
-describe("Shell PWA + Sesi Terencana — 02 seam", () => {
+describe("JEVARA shell — reference parity", () => {
   beforeEach(() => {
     localStorage.clear();
   });
 
-  it("renders 5 tabs and header JEVARA", () => {
-    renderHome();
-    expect(screen.getByText("JEVARA")).toBeInTheDocument();
-    expect(screen.getByText("Workout")).toBeInTheDocument();
-    expect(screen.getByText("Progress")).toBeInTheDocument();
-    expect(screen.getByText("Programs")).toBeInTheDocument();
-    expect(screen.getByText("Tools")).toBeInTheDocument();
+  it("renders header JEVARA + 5 bottom tabs", () => {
+    renderPage();
+    expect(screen.getAllByText("JEVARA").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Train with Direction.").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Latihan")).toBeInTheDocument();
+    expect(screen.getByText("Progres")).toBeInTheDocument();
+    expect(screen.getByText("Program")).toBeInTheDocument();
+    expect(screen.getByText("Lainnya")).toBeInTheDocument();
   });
 
-  it("shows Sesi Terencana Foundation Fase1 Senin = 19 sets read-only", () => {
-    renderHome();
-    // SessionCard inside dash tab shows expectedSets — multiple matches (dash summary + card), assert at least one
-    expect(screen.getAllByText(/19 sets/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText(/Barbell Bench Press/)).toBeInTheDocument();
-    expect(screen.getByText(/Read-only — logging/)).toBeInTheDocument();
+  it("home shows greeting hero + start button + readiness + IQ", () => {
+    renderPage();
+    expect(screen.getByText("MULAI LATIHAN")).toBeInTheDocument();
+    expect(screen.getByText("Kesiapan Hari Ini")).toBeInTheDocument();
+    expect(screen.getByText("◆ JEVARA IQ")).toBeInTheDocument();
   });
 
-  it("switches to Programs and shows template program", () => {
-    renderHome();
-    const progTab = screen.getByText("Programs");
-    fireEvent.click(progTab);
+  it("workout tab shows foundation program + phase pills + session", () => {
+    renderPage();
+    fireEvent.click(screen.getByText("Latihan"));
+    expect(screen.getByText("PROGRAM AKTIF")).toBeInTheDocument();
+    expect(screen.getByText("JEVARA 12-Week Foundation")).toBeInTheDocument();
+    expect(screen.getByText("START WORKOUT")).toBeInTheDocument();
+    expect(screen.getByText("MODE TERPANDU")).toBeInTheDocument();
+  });
+
+  it("programs tab shows foundation feature + template programs", () => {
+    renderPage();
+    fireEvent.click(screen.getByText("Program"));
+    expect(screen.getByText("Gunakan Program Utama")).toBeInTheDocument();
     expect(screen.getByText("Rekomposisi Pemula")).toBeInTheDocument();
+  });
+
+  it("tools tab shows tool grid + settings + language + profile", () => {
+    renderPage();
+    fireEvent.click(screen.getByText("Lainnya"));
+    expect(screen.getByText("Waktu Istirahat")).toBeInTheDocument();
+    expect(screen.getByText("Kalkulator 1RM")).toBeInTheDocument();
+    expect(screen.getByText("Pengaturan Latihan")).toBeInTheDocument();
+  });
+
+  it("shows beta auth gate when no account", () => {
+    renderPage();
+    expect(screen.getByText("COBA SEBAGAI GUEST")).toBeInTheDocument();
   });
 });

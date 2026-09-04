@@ -1,6 +1,7 @@
 export const LANG_KEY = "jevara_language_v1";
 export type Lang = "id" | "en";
 
+// Ported 1:1 from deploy/public/index.html I18N dictionary.
 const I18N: Record<Lang, Record<string, string>> = {
   id: {
     home: "Home",
@@ -13,6 +14,27 @@ const I18N: Record<Lang, Record<string, string>> = {
     export: "Export Backup",
     import: "Import Backup",
     language: "Bahasa",
+    performance: "HARI INI",
+    startWorkout: "MULAI LATIHAN",
+    restTimer: "Waktu Istirahat",
+    readiness: "Kesiapan Hari Ini",
+    energy: "Energi",
+    sleep: "Kualitas Tidur",
+    soreness: "Kelelahan Otot",
+    saveReadiness: "Simpan / Perbarui Kesiapan",
+    why: "MENGAPA?",
+    nextDirection: "ARAH BERIKUTNYA",
+    lastWorkout: "Latihan terakhir",
+    viewProgress: "Lihat progres",
+    indonesian: "Indonesia",
+    english: "English",
+    stable: "Stabil",
+    today: "Hari ini",
+    profile: "Profil",
+    updateProfile: "Perbarui Profil",
+    trainingToolkit: "Peralatan Latihan",
+    settings: "Pengaturan Latihan",
+    history: "Riwayat Latihan",
   },
   en: {
     home: "Home",
@@ -25,6 +47,27 @@ const I18N: Record<Lang, Record<string, string>> = {
     export: "Export Backup",
     import: "Import Backup",
     language: "Language",
+    performance: "TODAY",
+    startWorkout: "START WORKOUT",
+    restTimer: "Rest Timer",
+    readiness: "Daily Readiness",
+    energy: "Energy",
+    sleep: "Sleep",
+    soreness: "Soreness",
+    saveReadiness: "Save / Update Readiness",
+    why: "WHY?",
+    nextDirection: "NEXT DIRECTION",
+    lastWorkout: "Last workout",
+    viewProgress: "View progress",
+    indonesian: "Indonesian",
+    english: "English",
+    stable: "Stable",
+    today: "Today",
+    profile: "Profile",
+    updateProfile: "Update Profile",
+    trainingToolkit: "Training Toolkit",
+    settings: "Workout Settings",
+    history: "Workout History",
   },
 };
 
