@@ -8,6 +8,8 @@ import { swapCandidates } from "@/lib/workout/swap";
 import { swapReasonText } from "@/lib/jevara/meta";
 import { TechniqueBody } from "./Workout";
 import type { AutopilotSet } from "@/lib/workout/autopilot";
+import { getMeasurementType, validateSet } from "@/lib/session/measurement";
+import { useElapsedTimer } from "@/lib/workout/timer";
 
 const SWAP_REASONS = [
   { k: "EQUIPMENT_BUSY", id: "Alat sedang dipakai", en: "Equipment busy" },
@@ -18,17 +20,22 @@ const SWAP_REASONS = [
   { k: "PREFERENCE", id: "Ingin variasi", en: "Prefer another exercise" },
 ];
 
+function parseTargetSec(target: string): number {
+  const m = String(target || "").match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 30;
+}
+
 function useItemIQ(name: string, target: string) {
   const { premium } = useJevara();
   return useMemo(() => {
     if (!premium) return null;
     const events = (premium.events || [])
       .filter((e) => e.name === name)
-      .map((e) => ({ sessionId: e.sessionId, kg: e.kg, reps: e.reps, rir: e.rir, ts: e.ts, type: e.type }));
+      .map((e) => ({ sessionId: e.sessionId, kg: e.kg, reps: e.reps, rir: e.rir, ts: e.ts, type: e.type, durationSec: (e as { durationSec?: number }).durationSec, measurementType: (e as { measurementType?: string }).measurementType }));
     return iqLite({
       name,
       target,
-      events,
+      events: events as never,
       sessions: (premium.sessions || []).map((s) => ({ id: s.id, state: s.state })),
       readiness: (premium.readiness || [])[0] || null,
     });
@@ -37,7 +44,7 @@ function useItemIQ(name: string, target: string) {
 
 export function AutopilotBody() {
   const s = useJevara();
-  const { ap, lang, log } = s;
+  const { ap } = s;
   const [kg, setKg] = useState("");
   const [reps, setReps] = useState("");
   if (!ap) return <div className="muted">Tidak ada sesi terpandu aktif.</div>;
@@ -59,11 +66,43 @@ function AutopilotForm({
 }) {
   const s = useJevara();
   const { lang, log, effort, setEffort } = s;
+  const mtype = getMeasurementType(item.name);
+  const isHold = mtype === "timed_hold";
+  const isBW = mtype === "bodyweight_reps";
+  const targetSec = parseTargetSec(item.target);
   const q = useItemIQ(item.name, item.target);
   const ui = q ? uiForStage(q.stage) : null;
-  const prev = (s.premium?.events || []).find((e) => e.name === item.name && e.type !== "W" && e.kg > 0 && e.reps > 0) || null;
+  const prev = (s.premium?.events || []).find((e) => {
+    if (e.name !== item.name || e.type === "W") return false;
+    if (isHold) return Number((e as { durationSec?: number }).durationSec ?? e.reps) > 0;
+    if (isBW) return Number(e.reps) > 0;
+    return Number(e.kg) > 0 && Number(e.reps) > 0;
+  }) || null;
+  const timer = useElapsedTimer();
+
+  const logKg = String((log[item.key + "_kg"] as string) ?? "");
+  const logRp = String((log[item.key + "_rp"] as string) ?? "");
+  const effectiveKg = isHold || isBW ? "0" : (kg || logKg);
+  const effectiveReps = isHold ? (timer.elapsed > 0 ? String(timer.elapsed) : (reps || logRp)) : (reps || logRp);
+
+  const canLog = validateSet({
+    name: item.name,
+    kg: isHold || isBW ? "0" : effectiveKg,
+    reps: effectiveReps,
+    rir: effort,
+    type: isHold ? "T" : isBW ? "B" : "N",
+  }).valid;
+
+  const hint = !effort ? (lang === "id" ? "Pilih RIR untuk mencatat kalibrasi" : "Select RIR to log calibration") : isHold && timer.elapsed === 0 && Number(effectiveReps) === 0 ? (lang === "id" ? "Jalankan timer terlebih dahulu" : "Run the timer first") : "";
 
   const pickEffort = (v: string) => setEffort(v);
+
+  const handleLog = () => {
+    const k = isHold || isBW ? "0" : (kg || logKg);
+    const r = isHold ? (timer.elapsed > 0 ? String(timer.elapsed) : (reps || logRp)) : (reps || logRp);
+    s.autopilotDone(k, r);
+    if (isHold) timer.reset();
+  };
 
   return (
     <div className="ap95">
@@ -72,13 +111,15 @@ function AutopilotForm({
       </div>
       <h2>{item.name}</h2>
       <div className="sub">
-        Set {item.setIndex + 1} • {lang === "id" ? "target " : "target "} {item.target} reps
+        Set {item.setIndex + 1} • {lang === "id" ? "target " : "target "} {isHold ? `${targetSec} detik` : `${item.target} reps`}
       </div>
       <div className="target">
         <div className="muted">◆ JEVARA IQ</div>
         <b>{ui ? ui.title : "…"}</b>
         <div style={{ fontSize: 18, fontWeight: 900, marginTop: 5 }}>
-          {q && q.load !== null ? (
+          {isHold || isBW ? (
+            lang === "id" ? "Kalibrasi — tanpa beban" : "Calibration — no load"
+          ) : q && q.load !== null ? (
             <>
               {lang === "id" ? "Saran beban: " : "Suggested load: "}
               {fmt(q.load)} kg
@@ -105,31 +146,65 @@ function AutopilotForm({
           {lang === "id" ? "Mengapa?" : "Why?"}
         </button>
       </div>
-      <div className="ap95-inputs">
-        <div>
-          <div className="muted">KG</div>
-          <input
-            id="apKg"
-            type="number"
-            inputMode="decimal"
-            step="0.5"
-            value={kg || String((log[item.key + "_kg"] as string) ?? "")}
-            placeholder={prev ? String(prev.kg) : "kg"}
-            onChange={(e) => setKg(e.target.value)}
-          />
+
+      {isHold ? (
+        <div style={{ textAlign: "center", padding: "14px 0 8px" }}>
+          <div style={{ fontSize: 56, fontWeight: 950, letterSpacing: -2 }}>{timer.label}</div>
+          <div className="muted">TARGET {targetSec} DETIK</div>
+          <div className="g2" style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 10 }}>
+            <button id="apTimerBtn" className="primary" onClick={() => timer.toggle()} style={{ minWidth: 120 }}>
+              {timer.running ? (lang === "id" ? "JEDA" : "PAUSE") : lang === "id" ? "MULAI TIMER" : "START TIMER"}
+            </button>
+            <button className="secondary" onClick={() => timer.reset()}>
+              RESET
+            </button>
+          </div>
+          <div className="muted" style={{ marginTop: 8, fontSize: 11 }}>
+            {lang === "id" ? "Fokus durasi & teknik — tanpa kg" : "Duration & technique — no kg"}
+          </div>
         </div>
-        <div>
-          <div className="muted">REPS</div>
-          <input
-            id="apRp"
-            type="number"
-            inputMode="numeric"
-            value={reps || String((log[item.key + "_rp"] as string) ?? "")}
-            placeholder={prev ? String(prev.reps) : "reps"}
-            onChange={(e) => setReps(e.target.value)}
-          />
+      ) : isBW ? (
+        <div className="ap95-inputs" style={{ gridTemplateColumns: "1fr" }}>
+          <div>
+            <div className="muted">REPS</div>
+            <input
+              id="apRp"
+              type="number"
+              inputMode="numeric"
+              value={reps || logRp}
+              placeholder={prev ? String(prev.reps) : "reps"}
+              onChange={(e) => setReps(e.target.value)}
+            />
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="ap95-inputs">
+          <div>
+            <div className="muted">KG</div>
+            <input
+              id="apKg"
+              type="number"
+              inputMode="decimal"
+              step="0.5"
+              value={kg || logKg}
+              placeholder={prev ? String(prev.kg) : "kg"}
+              onChange={(e) => setKg(e.target.value)}
+            />
+          </div>
+          <div>
+            <div className="muted">REPS</div>
+            <input
+              id="apRp"
+              type="number"
+              inputMode="numeric"
+              value={reps || logRp}
+              placeholder={prev ? String(prev.reps) : "reps"}
+              onChange={(e) => setReps(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="muted" style={{ marginTop: 11 }}>
         {lang === "id" ? "Seberapa berat set ini?" : "How hard was that set?"}
       </div>
@@ -147,8 +222,13 @@ function AutopilotForm({
           </button>
         ))}
       </div>
-      <button className="primary" style={{ width: "100%" }} onClick={() => s.autopilotDone(kg || String((log[item.key + "_kg"] as string) ?? ""), reps || String((log[item.key + "_rp"] as string) ?? ""))}>
-        {lang === "id" ? "CATAT SET & LANJUT" : "LOG SET & CONTINUE"}
+      {hint && <div className="muted" style={{ marginTop: 6, fontSize: 11, color: "var(--or)" }}>{hint}</div>}
+
+      <button className="primary" style={{ width: "100%", opacity: canLog ? 1 : 0.5 }} disabled={!canLog} onClick={handleLog}>
+        {isHold ? (lang === "id" ? "CATAT DURASI & LANJUT" : "LOG DURATION & CONTINUE") : lang === "id" ? "CATAT SET & LANJUT" : "LOG SET & CONTINUE"}
+      </button>
+      <button className="secondary" style={{ width: "100%", marginTop: 7 }} onClick={() => s.skipAutopilotSet()}>
+        {lang === "id" ? "LANJUT" : "SKIP"}
       </button>
       <button
         className="secondary"
@@ -178,6 +258,7 @@ export function WhyBody({ name, target }: { name: string; target: string }) {
       <div className="muted" style={{ marginTop: 8 }}>
         {ui.desc}
       </div>
+      <div className="muted" style={{ marginTop: 4, fontSize: 11 }}>{q.why}</div>
       <div className="iq-why" style={{ marginTop: 12 }}>
         <b>{s.lang === "id" ? "DASAR REKOMENDASI" : "RECOMMENDATION BASIS"}</b>
         <br />
@@ -306,7 +387,7 @@ export function RestFullscreen() {
   const mm = Math.floor(left / 60);
   const ss = String(left % 60).padStart(2, "0");
   const id = s.lang === "id";
-  const next = s.ap && s.ap.sets[s.ap.pos] ? `${s.ap.sets[s.ap.pos].name} • Set ${s.ap.sets[s.ap.pos].setIndex + 1} • target ${s.ap.sets[s.ap.pos].target} reps` : id ? "Set berikutnya siap." : "Next set ready.";
+  const next = s.ap && s.ap.sets[s.ap.pos] ? `${s.ap.sets[s.ap.pos].name} • Set ${s.ap.sets[s.ap.pos].setIndex + 1} • target ${s.ap.sets[s.ap.pos].target} ${getMeasurementType(s.ap.sets[s.ap.pos].name) === "timed_hold" ? "detik" : "reps"}` : id ? "Set berikutnya siap." : "Next set ready.";
   return (
     <div className="autopilot-rest" id="je096RestOverlay" style={{ display: "flex", visibility: "visible" }}>
       <div className="rest-top">

@@ -14,6 +14,7 @@ import { AutopilotBody, AutopilotComplete, SwapReasonBody } from "./Autopilot";
 import { readinessScore } from "@/lib/iq/readiness";
 import { updatePR, type PR as BaselinePR } from "@/lib/iq/baseline";
 import { getLang as readLang, setLang as writeLang, type Lang } from "@/lib/i18n";
+import { getMeasurementType } from "@/lib/session/measurement";
 
 export type TabId = "dash" | "log" | "prog" | "pgm" | "tools";
 
@@ -133,6 +134,7 @@ interface Store {
   setEffort: (v: string | null) => void;
   openAutopilot: () => void;
   autopilotDone: (kg: string, reps: string) => void;
+  skipAutopilotSet: () => void;
   closeAutopilot: () => void;
   // rest fullscreen
   restFull: RestState | null;
@@ -530,24 +532,43 @@ export function JevaraProvider({ children }: { children: React.ReactNode }) {
       if (!ap || !ctx) return;
       const item = ap.sets[ap.pos];
       if (!item) return;
-      if (!kg || !reps) {
-        toastMsg(lang === "id" ? "Isi kg dan reps" : "Enter kg and reps");
+      const mtype = getMeasurementType(item.name);
+      const isHold = mtype === "timed_hold";
+      const isBW = mtype === "bodyweight_reps";
+      const kgVal = isHold || isBW ? "0" : kg;
+      const repsVal = reps;
+      if (isHold || isBW) {
+        if (!repsVal || Number(repsVal) <= 0) {
+          toastMsg(isHold ? (lang === "id" ? "Jalankan timer terlebih dahulu" : "Run the timer first") : (lang === "id" ? "Isi repetisi" : "Enter reps"));
+          return;
+        }
+      } else {
+        if (!kgVal || !repsVal) {
+          toastMsg(lang === "id" ? "Isi kg dan reps" : "Enter kg and reps");
+          return;
+        }
+      }
+      if (effort === null) {
+        toastMsg(lang === "id" ? "Pilih RIR untuk mencatat kalibrasi" : "Select RIR to log calibration");
         return;
       }
-      const rir = effort === null ? "2" : effort;
+      const rir = effort;
       const key = item.key;
       const was = !!log[key + "_ok"];
-      const nl = { ...log, [key + "_kg"]: kg, [key + "_rp"]: reps, [key + "_rir"]: rir, [key + "_type"]: "N" } as Log;
+      const type = isHold ? "T" : isBW ? "B" : "N";
+      const nl = { ...log, [key + "_kg"]: kgVal, [key + "_rp"]: repsVal, [key + "_rir"]: rir, [key + "_type"]: type } as Log;
       if (!was) {
         nl[key + "_ok"] = true;
-        const res = completeSet({ name: item.name, exerciseId: item.exerciseId, key, kg, reps, rir, type: "N", session: activeSession, log: nl, events: premium?.events || [] });
+        const res = completeSet({ name: item.name, exerciseId: item.exerciseId, key, kg: kgVal, reps: repsVal, rir, type, session: activeSession, log: nl, events: premium?.events || [] });
         if (res.newEvents && premium) {
           const np = { ...premium, events: res.newEvents };
           const ev = res.newEvents[0];
-          if (ev && ev.kg > 0 && ev.reps > 0) {
-            const r = updatePR(np.prs as unknown as Record<string, BaselinePR>, ev.name, ev.kg, ev.reps);
-            np.prs = r.prs as unknown as Record<string, PR>;
-            if (r.isPR) toastMsg("🏆 Personal Record baru!");
+          if (ev && ((isHold && Number(ev.durationSec ?? ev.reps) > 0) || (isBW && Number(ev.reps) > 0) || (ev.kg > 0 && ev.reps > 0))) {
+            if (!isHold && !isBW) {
+              const r = updatePR(np.prs as unknown as Record<string, BaselinePR>, ev.name, ev.kg, ev.reps);
+              np.prs = r.prs as unknown as Record<string, PR>;
+              if (r.isPR) toastMsg("🏆 Personal Record baru!");
+            }
           }
           savePremiumState(np);
         }
@@ -579,6 +600,29 @@ export function JevaraProvider({ children }: { children: React.ReactNode }) {
     },
     [ap, ctx, log, effort, premium, activeSession, lang, toastMsg, saveLogState, savePremiumState, track, openOverlay, closeOverlay, refresh]
   );
+
+  const skipAutopilotSet = useCallback(() => {
+    if (!ap || !ctx) return;
+    const nl = { ...log } as Log;
+    const next = nextUnloggedPos(ap.sets, nl, ap.pos);
+    if (next < 0) {
+      openOverlay(lang === "id" ? "Sesi Latihan" : "Workout Session", <AutopilotComplete />);
+      return;
+    }
+    const nap = { ...ap, pos: next };
+    setAp(nap);
+    try {
+      localStorage.setItem(AP_KEY, JSON.stringify({ sets: nap.sets, pos: nap.pos, savedAt: Date.now() }));
+    } catch {}
+    closeOverlay();
+    setTimeout(() => {
+      openOverlay(lang === "id" ? "Sesi Latihan" : "Workout Session", <AutopilotBody />);
+      refresh();
+    }, 50);
+    track("autopilot_skipped", { from: ap.pos, to: next });
+    toastMsg(lang === "id" ? "Set dilewati — lanjut ke set berikutnya" : "Set skipped — next set");
+    refresh();
+  }, [ap, ctx, log, lang, toastMsg, track, openOverlay, closeOverlay, refresh]);
 
   // ---- rest fullscreen ----
   const startRestFull = useCallback(
@@ -707,13 +751,13 @@ export function JevaraProvider({ children }: { children: React.ReactNode }) {
       handleStart, handleFinish, toggleSet, saveNote, doneCount, volume,
       rest, startRestFloat, adjustRestFloat, toggleRestFloat, stopRestFloat,
       saveReadiness,
-      ap, effort, setEffort, openAutopilot, autopilotDone, closeAutopilot,
+      ap, effort, setEffort, openAutopilot, autopilotDone, skipAutopilotSet, closeAutopilot,
       restFull, startRestFull, adjustRestFull, finishRestFull,
       openSwapReason, confirmSwap,
       addWeight, setAccountState, logout, hydrated, refresh, bump,
     }),
     [lang, tab, curPh, curWk, curDay, activeCat, curLift, activeCP, cpWk, cpDay, log, premium, jevara, account, activeSession, ctx, toast, overlay, doneCount, volume, rest, ap, effort, restFull, hydrated, bump,
-      setLangFull, goTab, setActiveCP, saveLogState, savePremiumState, saveJevaraState, track, toastMsg, openOverlay, closeOverlay, handleStart, handleFinish, toggleSet, saveNote, startRestFloat, adjustRestFloat, toggleRestFloat, stopRestFloat, saveReadiness, setEffort, openAutopilot, autopilotDone, closeAutopilot, startRestFull, adjustRestFull, finishRestFull, openSwapReason, confirmSwap, addWeight, setAccountState, logout, refresh]
+      setLangFull, goTab, setActiveCP, saveLogState, savePremiumState, saveJevaraState, track, toastMsg, openOverlay, closeOverlay, handleStart, handleFinish, toggleSet, saveNote, startRestFloat, adjustRestFloat, toggleRestFloat, stopRestFloat, saveReadiness, setEffort, openAutopilot, autopilotDone, skipAutopilotSet, closeAutopilot, startRestFull, adjustRestFull, finishRestFull, openSwapReason, confirmSwap, addWeight, setAccountState, logout, refresh]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

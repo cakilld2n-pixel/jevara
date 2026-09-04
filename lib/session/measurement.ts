@@ -4,9 +4,9 @@ export function getMeasurementType(name: string): MeasurementType {
   const n = String(name || "").toLowerCase();
   if (/assisted.*(pull|dip)/i.test(n)) return "assisted_reps";
   if (/plank|wall sit|dead hang|\bhold\b|carry/i.test(n)) return "timed_hold";
-  // bodyweight_reps: pull-up, chin-up, push-up, dip, hanging raise without weighted/assisted
+  // bodyweight_reps: pull-up, chin-up, push-up, dip, hanging raise without weighted/assisted (plural raises tolerated)
   if (
-    /hanging (knee|leg) raise|pull.?up|chin.?up|push.?up|\bdip\b/i.test(n) &&
+    /hanging (knee|leg) raises?|pull.?up|chin.?up|push.?up|\bdip\b/i.test(n) &&
     !/weighted|assisted/i.test(n)
   )
     return "bodyweight_reps";

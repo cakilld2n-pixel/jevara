@@ -9,13 +9,26 @@ import { techniqueMeta } from "@/lib/jevara/meta";
 import { readinessScore, readinessAction } from "@/lib/iq/readiness";
 import { iqLite, uiForStage } from "@/lib/iq/iqLite";
 import { SessionClock } from "./Shell";
+import { getMeasurementType } from "@/lib/session/measurement";
+import { useElapsedTimer } from "@/lib/workout/timer";
+
+function parseTargetSec(target: string): number {
+  const m = String(target || "").match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : 30;
+}
 
 function usePrev(name: string) {
   const { premium } = useJevara();
-  return useMemo(
-    () => (premium?.events || []).find((e) => e.name === name && e.type !== "W" && e.kg > 0 && e.reps > 0) || null,
-    [premium, name]
-  );
+  const mtype = getMeasurementType(name);
+  return useMemo(() => {
+    const evs = premium?.events || [];
+    const found = evs.find((e) => e.name === name && e.type !== "W" && (() => {
+      if (mtype === "timed_hold") return Number((e as { durationSec?: number }).durationSec ?? e.reps) > 0;
+      if (mtype === "bodyweight_reps") return Number(e.reps) > 0;
+      return Number(e.kg) > 0 && Number(e.reps) > 0;
+    })());
+    return found || null;
+  }, [premium, name, mtype]);
 }
 
 function useExerciseIQ(name: string, target: string) {
@@ -61,14 +74,34 @@ function ExerciseCard({ ex, i, ctx }: { ex: Exercise; i: number; ctx: SessionCon
   const target = ex.r || ex.reps || "—";
   const exId = ex.id || `e${i}`;
   const meta = techniqueMeta(name);
+  const mtype = getMeasurementType(name);
+  const isHold = mtype === "timed_hold";
+  const isBW = mtype === "bodyweight_reps";
+  const targetSec = parseTargetSec(target);
   const prev = usePrev(name);
   const q = useExerciseIQ(name, target);
   const ui = q ? uiForStage(q.stage) : null;
+  const timer = useElapsedTimer();
 
   const rirLabel = (v: string) => {
     if (v === "" || v === undefined) return "RIR";
     return `RIR ${v}`;
   };
+
+  // prev text per measurement
+  const prevText = (() => {
+    if (!prev) return "No baseline";
+    if (isHold) return `Last ${Number((prev as { durationSec?: number }).durationSec ?? prev.reps) || 0} dtk`;
+    if (isBW) return `Last ${Number(prev.reps) || 0} reps`;
+    return `Last ${fmt(prev.kg)}×${prev.reps}`;
+  })();
+
+  const nextText = (() => {
+    if (isHold) return `Target durasi berikutnya: ${targetSec} detik`;
+    if (isBW) return `Target berikutnya: ${target} reps`;
+    if (q && q.load !== null) return `Next target load ≈ ${fmt(q.load)} kg`;
+    return null;
+  })();
 
   return (
     <div className="v095-ex">
@@ -76,16 +109,10 @@ function ExerciseCard({ ex, i, ctx }: { ex: Exercise; i: number; ctx: SessionCon
         <div className="name">
           <b>{name}</b>
           <small>
-            {sets} working sets • {target} reps • {meta.muscle}
+            {sets} working sets • {isHold ? `${targetSec} detik` : `${target} reps`} • {meta.muscle}
           </small>
         </div>
-        {prev ? (
-          <span className="v095-prev">
-            Last {fmt(prev.kg)}×{prev.reps}
-          </span>
-        ) : (
-          <span className="v095-prev">No baseline</span>
-        )}
+        <span className="v095-prev">{prevText}</span>
       </div>
       {q && ui && (
         <div className="v095-iq">
@@ -98,27 +125,71 @@ function ExerciseCard({ ex, i, ctx }: { ex: Exercise; i: number; ctx: SessionCon
             </div>
             <span className="conf">{q.confidence}% conf.</span>
           </div>
-          {q.load !== null && <div className="next">Next target load ≈ {fmt(q.load)} kg</div>}
+          {nextText && <div className="next">{nextText}</div>}
           <div className="why">WHY: {q.why}</div>
+        </div>
+      )}
+      {isHold && (
+        <div className="card" style={{ textAlign: "center", padding: "12px 0 10px", margin: "10px 0" }}>
+          <div style={{ fontSize: 36, fontWeight: 950, letterSpacing: -1 }}>{timer.label}</div>
+          <div className="muted">TARGET {targetSec} DETIK</div>
+          <div className="g2" style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8 }}>
+            <button className="primary" onClick={() => timer.toggle()}>
+              {timer.running ? (lang === "id" ? "JEDA" : "PAUSE") : lang === "id" ? "MULAI TIMER" : "START TIMER"}
+            </button>
+            <button className="secondary" onClick={() => timer.reset()}>
+              RESET
+            </button>
+          </div>
+          <div className="muted" style={{ marginTop: 6, fontSize: 11 }}>
+            {lang === "id" ? "Fokus durasi & teknik — tanpa kg" : "Duration & technique — no kg"}
+          </div>
         </div>
       )}
       <div className="v095-sets">
         <div className="v095-set-head">
           <span>Set</span>
           <span>Prev</span>
-          <span>kg</span>
-          <span>reps</span>
+          {isHold ? (
+            <>
+              <span>—</span>
+              <span>detik</span>
+            </>
+          ) : isBW ? (
+            <>
+              <span>—</span>
+              <span>reps</span>
+            </>
+          ) : (
+            <>
+              <span>kg</span>
+              <span>reps</span>
+            </>
+          )}
           <span>Effort / RIR</span>
           <span>✓</span>
         </div>
         {Array.from({ length: sets }, (_, si) => {
           const key = ctx.key(i, si);
-          const kg = String(log[key + "_kg"] ?? "");
-          const rp = String(log[key + "_rp"] ?? "");
+          const rawKg = String(log[key + "_kg"] ?? "");
+          const rawRp = String(log[key + "_rp"] ?? "");
           const rir = log[key + "_rir"] === undefined ? "" : String(log[key + "_rir"]);
-          const type = String(log[key + "_type"] ?? "N");
+          const type = String(log[key + "_type"] ?? (isHold ? "T" : isBW ? "B" : "N"));
           const done = !!log[key + "_ok"];
-          const prevTxt = prev ? `${fmt(prev.kg)}×${prev.reps}` : "—";
+          const prevTxt = (() => {
+            if (!prev) return "—";
+            if (isHold) return `${Number((prev as { durationSec?: number }).durationSec ?? prev.reps) || 0}s`;
+            if (isBW) return `${Number(prev.reps) || 0} reps`;
+            return `${fmt(prev.kg)}×${prev.reps}`;
+          })();
+          const kg = isHold || isBW ? "0" : rawKg;
+          const rpForDisplay = rawRp;
+          const canLog = (() => {
+            const hasRir = rir !== "";
+            if (isHold) return (timer.elapsed > 0 || Number(rawRp) > 0) && hasRir;
+            if (isBW) return Number(rawRp) > 0 && hasRir;
+            return Number(rawKg) > 0 && Number(rawRp) > 0 && hasRir;
+          })();
           return (
             <React.Fragment key={key}>
               <div className="v095-set">
@@ -128,15 +199,17 @@ function ExerciseCard({ ex, i, ctx }: { ex: Exercise; i: number; ctx: SessionCon
                   type="number"
                   inputMode="decimal"
                   step="0.5"
-                  placeholder={prev ? String(prev.kg) : "kg"}
-                  value={kg}
+                  placeholder={isHold || isBW ? "—" : prev ? String(prev.kg) : "kg"}
+                  value={isHold || isBW ? "" : rawKg}
+                  disabled={isHold || isBW}
+                  style={isHold || isBW ? { visibility: "hidden" } : undefined}
                   onChange={(e) => s.saveLogState({ ...s.log, [key + "_kg"]: e.target.value })}
                 />
                 <input
                   type="number"
                   inputMode="numeric"
-                  placeholder={prev ? String(prev.reps) : "reps"}
-                  value={rp}
+                  placeholder={isHold ? (prev ? String(Number((prev as { durationSec?: number }).durationSec ?? prev.reps)) : "detik") : isBW ? (prev ? String(prev.reps) : "reps") : prev ? String(prev.reps) : "reps"}
+                  value={isHold && timer.elapsed > 0 && !done ? String(timer.elapsed) : rpForDisplay}
                   onChange={(e) => s.saveLogState({ ...s.log, [key + "_rp"]: e.target.value })}
                 />
                 <select value={rir} onChange={(e) => s.saveLogState({ ...s.log, [key + "_rir"]: e.target.value })}>
@@ -149,9 +222,12 @@ function ExerciseCard({ ex, i, ctx }: { ex: Exercise; i: number; ctx: SessionCon
                 </select>
                 <button
                   className={"donebtn " + (done ? "done" : "")}
+                  title={!canLog && !done ? (rir === "" ? "Pilih RIR untuk mencatat kalibrasi" : isHold ? "Jalankan timer atau isi detik" : "Isi reps") : undefined}
                   onClick={(ev) => {
                     ev.stopPropagation();
-                    s.toggleSet(i, si, name, exId, kg, rp, rir, type);
+                    const rpVal = isHold ? (timer.elapsed > 0 ? String(timer.elapsed) : rawRp) : rawRp;
+                    s.toggleSet(i, si, name, exId, kg, rpVal, rir, isHold ? "T" : isBW ? "B" : type);
+                    if (isHold && canLog) timer.reset();
                   }}
                 >
                   {done ? "✓" : "○"}
