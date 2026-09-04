@@ -27,8 +27,12 @@ self.addEventListener('activate', function (event) {
 self.addEventListener('fetch', function (event) {
   var req = event.request;
   if (req.method !== 'GET') return;
-
-  var url = new URL(req.url);
+  var url;
+  try {
+    url = new URL(req.url);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
+    if (url.pathname.startsWith('/_next/webpack')) return;
+  } catch (e) { return; }
   var isAppShell = url.pathname === '/' || url.pathname.endsWith('/index.html');
 
   if (isAppShell) {
@@ -36,7 +40,7 @@ self.addEventListener('fetch', function (event) {
     event.respondWith(
       fetch(req).then(function (res) {
         var copy = res.clone();
-        caches.open(CACHE).then(function (cache) { cache.put(req, copy); });
+        caches.open(CACHE).then(function (cache) { cache.put(req, copy).catch(function(){}); }).catch(function(){});
         return res;
       }).catch(function () {
         return caches.match(req);
@@ -50,7 +54,7 @@ self.addEventListener('fetch', function (event) {
     caches.match(req).then(function (cached) {
       return cached || fetch(req).then(function (res) {
         var copy = res.clone();
-        caches.open(CACHE).then(function (cache) { cache.put(req, copy); });
+        caches.open(CACHE).then(function (cache) { cache.put(req, copy).catch(function(){}); }).catch(function(){});
         return res;
       });
     })
